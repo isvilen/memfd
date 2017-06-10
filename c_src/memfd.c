@@ -35,7 +35,6 @@
 
 typedef struct {
     ErlNifResourceType* memfd_type;
-    ErlNifResourceType* memap_type;
     ERL_NIF_TERM atom_ok;
     ERL_NIF_TERM atom_error;
     ERL_NIF_TERM atom_true;
@@ -59,14 +58,7 @@ typedef struct {
 } memfd;
 
 
-typedef struct {
-    void *buf;
-    size_t size;
-} memap;
-
-
 static memfd* allocate_memfd(memfd_data *data, int fd);
-static memap* allocate_memap(memfd_data *data, void *buf, size_t size);
 static ERL_NIF_TERM errno_error(ErlNifEnv* env, int error);
 static bool get_location(ErlNifEnv* env, ERL_NIF_TERM arg,
                          off_t *offset,  int *whence);
@@ -479,68 +471,6 @@ pwrite_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 }
 
 
-static ERL_NIF_TERM
-mmap_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
-{
-    memfd_data *data = (memfd_data *) enif_priv_data(env);
-
-    void *ptr;
-    if (!enif_get_resource(env, argv[0], data->memfd_type, &ptr))
-        return enif_make_badarg(env);
-
-    memfd *mfd = (memfd *) ptr;
-
-    enif_rwlock_rwlock(mfd->lock);
-
-    if (mfd->fd == -1) {
-        enif_rwlock_rwunlock(mfd->lock);
-        return errno_error(env, EBADF);
-    }
-
-    if (!mfd->sealed) {
-        if (fcntl(mfd->fd, F_ADD_SEALS, F_SEAL_SHRINK) == -1) {
-            enif_rwlock_rwunlock(mfd->lock);
-            return errno_error(env, errno);
-        }
-        mfd->sealed = true;
-    }
-
-    struct stat st;
-    if (fstat(mfd->fd, &st) < 0) {
-        enif_rwlock_rwunlock(mfd->lock);
-        return errno_error(env, errno);
-    }
-
-    void *buf = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED,
-                     mfd->fd, 0);
-
-    enif_rwlock_rwunlock(mfd->lock);
-
-    if (buf == MAP_FAILED) return errno_error(env, errno);
-
-    memap *map = allocate_memap(data, buf, st.st_size);
-
-    ERL_NIF_TERM result = enif_make_resource(env, map);
-    enif_release_resource(map);
-
-    return enif_make_tuple2(env, data->atom_ok, result);
-}
-
-
-static ERL_NIF_TERM
-mmap_buffer_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
-{
-    memfd_data *data = (memfd_data *) enif_priv_data(env);
-
-    void *ptr;
-    if (!enif_get_resource(env, argv[0], data->memap_type, &ptr))
-        return enif_make_badarg(env);
-
-    memap *map = (memap *)ptr;
-
-    return enif_make_resource_binary(env, ptr, map->buf, map->size);
-}
-
 
 static ERL_NIF_TERM
 from_fd_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
@@ -620,17 +550,6 @@ static void memfd_dtor(ErlNifEnv *env, void *obj)
 }
 
 
-static void memap_dtor(ErlNifEnv *env, void *obj)
-{
-    memap *map = (memap *) obj;
-
-    if (map->buf != NULL) {
-        munmap(map->buf, map->size);
-        map->buf = NULL;
-    }
-}
-
-
 static ErlNifFunc nifs[] =
 {
     {"create_nif",     1, create_nif},
@@ -644,8 +563,6 @@ static ErlNifFunc nifs[] =
     {"position_nif",   2, position_nif},
     {"pread_nif",      3, pread_nif},
     {"pwrite_nif",     3, pwrite_nif},
-    {"mmap_nif",       1, mmap_nif},
-    {"mmap_buffer_nif",1, mmap_buffer_nif},
     {"from_fd_nif",    1, from_fd_nif},
     {"to_fd_nif",      1, to_fd_nif},
 };
@@ -657,11 +574,7 @@ static bool open_resource_types(ErlNifEnv *env, memfd_data *data)
                                                ERL_NIF_RT_CREATE |
                                                ERL_NIF_RT_TAKEOVER, NULL);
 
-    data->memap_type = enif_open_resource_type(env, NULL, "memap", memap_dtor,
-                                               ERL_NIF_RT_CREATE |
-                                               ERL_NIF_RT_TAKEOVER, NULL);
-
-    if (!data->memfd_type || !data->memap_type) return false;
+    if (!data->memfd_type) return false;
 
     return true;
 }
@@ -727,17 +640,6 @@ memfd* allocate_memfd(memfd_data *data, int fd)
     mfd->sealed = false;
 
     return mfd;
-}
-
-
-memap* allocate_memap(memfd_data *data, void *buf, size_t size)
-{
-    memap *map = (memap *) enif_alloc_resource(data->memap_type, sizeof(memap));
-
-    map->buf = buf;
-    map->size = size;
-
-    return map;
 }
 
 

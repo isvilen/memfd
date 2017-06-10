@@ -57,15 +57,6 @@ memfd_truncate_test() ->
     ?assertEqual({ok, <<1,2,3,4,5>>}, file:read(Fd, 10)).
 
 
-mmap_test() ->
-    Fd = memfd:create(),
-    ?assertEqual({error, einval}, memfd:mmap(Fd)),
-    ?assertEqual(ok, memfd:write(Fd, <<1,2,3,4,5>>)),
-    ?assertEqual({ok, <<1,2,3,4,5>>}, memfd:mmap(Fd)),
-    ?assertEqual(ok, memfd:write(Fd, <<6,7,8,9,10>>)),
-    ?assertEqual({ok, <<1,2,3,4,5,6,7,8,9,10>>}, memfd:mmap(Fd)).
-
-
 from_to_binary_test() ->
     Fd1 = memfd:create(),
     FdBin = memfd:fd_to_binary(Fd1),

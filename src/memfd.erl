@@ -11,7 +11,6 @@
         , position/2
         , pread/3
         , pwrite/3
-        , mmap/1
         , fd_to_binary/1
         , fd_from_binary/1
         ]).
@@ -163,18 +162,6 @@ pwrite(Fd, Location, Bytes) ->
     end.
 
 
--spec mmap(Fd) -> {ok, Mmap} | {error, Reason} when
-      Fd     :: file:fd(),
-      Mmap   :: binary(),
-      Reason :: file:posix().
-
-mmap(#file_descriptor{data=Data}) ->
-    case mmap_nif(Data) of
-        {ok, MMap} -> {ok, mmap_buffer_nif(MMap)};
-        Error      -> Error
-    end.
-
-
 -spec fd_from_binary(Bin) -> Fd when
       Bin :: binary(),
       Fd  :: file:fd().
@@ -246,9 +233,3 @@ pread_nif(Data, At, Size) ->
 
 pwrite_nif(Data, At, Bytes) ->
     erlang:nif_error(not_loaded, [Data, At, Bytes]).
-
-mmap_nif(Data) ->
-    erlang:nif_error(not_loaded, [Data]).
-
-mmap_buffer_nif(MMap) ->
-    erlang:nif_error(not_loaded, [MMap]).
