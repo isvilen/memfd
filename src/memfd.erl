@@ -1,6 +1,7 @@
 -module(memfd).
 
--export([ create/0
+-export([ new/0
+        , new/1
         , close/1
         , advise/4
         , allocate/3
@@ -11,8 +12,7 @@
         , position/2
         , pread/3
         , pwrite/3
-        , fd_to_binary/1
-        , fd_from_binary/1
+        , fd/1
         ]).
 
 -on_load(init/0).
@@ -20,12 +20,22 @@
 -include_lib("kernel/include/file.hrl").
 
 
--spec create() -> file:fd().
+-spec new() -> file:fd().
 
-create() ->
+new() ->
     Id = erlang:unique_integer([positive]),
     Name = lists:flatten(io_lib:format("~p-~w", [self(), Id])),
     case create_nif(Name) of
+        Data -> #file_descriptor{module=?MODULE, data=Data}
+    end.
+
+
+-spec new(FdBin) -> Fd when
+      FdBin :: binary(),
+      Fd  :: file:fd().
+
+new(FdBin) ->
+    case from_fd_nif(FdBin) of
         Data -> #file_descriptor{module=?MODULE, data=Data}
     end.
 
@@ -162,19 +172,9 @@ pwrite(Fd, Location, Bytes) ->
     end.
 
 
--spec fd_from_binary(Bin) -> Fd when
-      Bin :: binary(),
-      Fd  :: file:fd().
+-spec fd(Fd) -> binary() when Fd :: file:fd().
 
-fd_from_binary(Bin) ->
-    case from_fd_nif(Bin) of
-        Data -> #file_descriptor{module=?MODULE, data=Data}
-    end.
-
-
--spec fd_to_binary(Fd) -> binary() when Fd :: file:fd().
-
-fd_to_binary(#file_descriptor{data=Data}) ->
+fd(#file_descriptor{data=Data}) ->
     to_fd_nif(Data).
 
 
