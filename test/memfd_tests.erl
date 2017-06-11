@@ -57,6 +57,70 @@ memfd_truncate_test() ->
     ?assertEqual({ok, <<1,2,3,4,5>>}, file:read(Fd, 10)).
 
 
+seal_test_() -> {foreach, fun memfd:new/0, [
+  {with, [fun (Fd) ->
+              ?assert(not memfd:is_sealed(Fd, seal)),
+              ?assertEqual(ok, memfd:seal(Fd, seal)),
+              ?assert(memfd:is_sealed(Fd, seal)),
+              ?assertEqual({error, eperm}, memfd:seal(Fd, shrink))
+          end]}
+
+ ,{with, [fun (Fd) ->
+              ?assert(not memfd:is_sealed(Fd, shrink)),
+              ?assertEqual(ok, memfd:write(Fd, <<1,2,3,4>>)),
+              ?assertEqual(ok, memfd:seal(Fd, shrink)),
+              ?assert(memfd:is_sealed(Fd, shrink)),
+              ?assertEqual({error, eperm}, memfd:truncate(Fd, 0)),
+              ?assertEqual(ok, memfd:truncate(Fd, 8))
+          end]}
+
+ ,{with, [fun (Fd) ->
+              ?assert(not memfd:is_sealed(Fd, grow)),
+              ?assertEqual(ok, memfd:write(Fd, <<1,2,3,4>>)),
+              ?assertEqual(ok, memfd:seal(Fd, grow)),
+              ?assert(memfd:is_sealed(Fd, grow)),
+              ?assertEqual({error, eperm}, memfd:truncate(Fd, 8)),
+              ?assertEqual(ok, memfd:truncate(Fd, 0))
+          end]}
+
+ ,{with, [fun (Fd) ->
+              ?assert(not memfd:is_sealed(Fd, write)),
+              ?assertEqual(ok, memfd:write(Fd, <<1,2,3,4>>)),
+              ?assertEqual(ok, memfd:seal(Fd, write)),
+              ?assert(memfd:is_sealed(Fd, write)),
+              ?assertEqual({error, eperm}, memfd:write(Fd, <<1,2,3,4>>))
+          end]}
+ ]}.
+
+
+owner_test() ->
+    Fd = memfd:new(),
+    ?assertEqual(self(), memfd:owner(Fd)),
+
+    Pid = spawn_link(fun Loop() ->
+                       receive
+                           {step1, Self} ->
+                               Self ! memfd:set_owner(Fd, self()), Loop();
+                           {step2, Self} ->
+                               Self ! memfd:close(Fd), Loop();
+                           {step3, Self} ->
+                               Self ! memfd:close(Fd)
+                       end
+                     end),
+
+    Pid ! {step1, self()},
+    ?assertEqual({error, eperm}, receive X -> X end),
+
+    Pid ! {step2, self()},
+    ?assertEqual({error, eperm}, receive X -> X end),
+
+    ?assertEqual(ok, memfd:set_owner(Fd, Pid)),
+    ?assertEqual(Pid, memfd:owner(Fd)),
+
+    Pid ! {step3, self()},
+    ?assertEqual(ok, receive X -> X end).
+
+
 from_to_binary_fd_test() ->
     Fd1 = memfd:new(),
     FdBin = memfd:fd(Fd1),
@@ -66,3 +130,13 @@ from_to_binary_fd_test() ->
     ?assertEqual({ok, <<1,2,3,4,5>>}, file:read(Fd2,5)),
     ?assertEqual(ok, file:close(Fd1)),
     ?assertEqual(ok, file:close(Fd2)).
+
+
+to_binary_test() ->
+    Fd = memfd:new(),
+    ?assertEqual(ok, file:write(Fd, <<1,2,3,4,5>>)),
+    ?assertEqual({error, eperm}, memfd:to_binary(Fd)),
+    ?assertEqual(ok, memfd:seal(Fd, shrink)),
+    ?assertEqual({error, eperm}, memfd:to_binary(Fd)),
+    ?assertEqual(ok, memfd:seal(Fd, write)),
+    ?assertEqual({ok, <<1,2,3,4,5>>}, memfd:to_binary(Fd)).
