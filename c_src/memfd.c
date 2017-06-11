@@ -567,6 +567,71 @@ seal_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 
 
 static ERL_NIF_TERM
+owner_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    void *ptr;
+    if (!enif_get_resource(env, argv[0], memfd_type, &ptr))
+        return enif_make_badarg(env);
+
+    memfd *mfd = (memfd *) ptr;
+
+    enif_rwlock_rlock(mfd->lock);
+
+    if (mfd->closed) {
+        enif_rwlock_runlock(mfd->lock);
+        return raise_errno_exception(env, EBADF);
+    }
+
+    ErlNifPid pid = mfd->owner;
+
+    enif_rwlock_runlock(mfd->lock);
+
+    return enif_make_pid(env, &pid);
+}
+
+
+static ERL_NIF_TERM
+set_owner_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    void *ptr;
+    if (!enif_get_resource(env, argv[0], memfd_type, &ptr))
+        return enif_make_badarg(env);
+
+    ErlNifPid pid;
+    if (!enif_get_local_pid(env, argv[1], &pid))
+        return enif_make_badarg(env);
+
+    memfd *mfd = (memfd *) ptr;
+
+    enif_rwlock_rwlock(mfd->lock);
+
+    if (mfd->closed) {
+        enif_rwlock_rwunlock(mfd->lock);
+        return raise_errno_exception(env, EBADF);
+    }
+
+    if (!is_owned(env, mfd)) {
+        enif_rwlock_rwunlock(mfd->lock);
+        return errno_error(env, EPERM);
+    }
+
+    ErlNifMonitor mon;
+    if (enif_monitor_process(env, mfd, &pid, &mon) != 0) {
+        enif_rwlock_rwunlock(mfd->lock);
+        return enif_make_badarg(env);
+    }
+    
+    enif_demonitor_process(env, mfd, &mfd->monitor);
+
+    mfd->monitor = mon;
+    mfd->owner = pid;
+    enif_rwlock_rwunlock(mfd->lock);
+
+    return atom_ok;
+}
+
+
+static ERL_NIF_TERM
 is_sealed_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 {
     void *ptr;
@@ -611,8 +676,8 @@ static void memfd_down(ErlNifEnv* env, void* obj, ErlNifPid* pid, ErlNifMonitor*
     memfd* mfd = (memfd *) obj;
 
     enif_rwlock_rwlock(mfd->lock);
-
-    if (mfd->closed) {
+    
+    if (enif_compare_monitors(&mfd->monitor, mon) != 0 || mfd->closed) {
         enif_rwlock_rwunlock(mfd->lock);
         return;
     }
@@ -652,6 +717,9 @@ static ErlNifFunc nifs[] =
 
     {"seal_nif",       2, seal_nif,      ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"is_sealed_nif",  2, is_sealed_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+
+    {"owner_nif",      1, owner_nif,     ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"set_owner_nif",  2, set_owner_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
 };
 
 

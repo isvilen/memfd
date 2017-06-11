@@ -15,6 +15,8 @@
         , seal/2
         , is_sealed/2
         , fd/1
+        , owner/1
+        , set_owner/2
         ]).
 
 -on_load(init/0).
@@ -197,6 +199,22 @@ fd(#file_descriptor{data=Data}) ->
     to_fd_nif(Data).
 
 
+-spec owner(Fd) -> Pid when
+      Fd   :: file:fd(),
+      Pid  :: pid().
+
+owner(#file_descriptor{data = Data}) ->
+    owner_nif(Data).
+
+
+-spec set_owner(Fd, Pid) -> ok  when
+      Fd  :: file:fd(),
+      Pid :: pid().
+
+set_owner(#file_descriptor{data = Data}, Pid) ->
+    set_owner_nif(Data, Pid).
+
+
 normalize_location(Location) ->
     case Location of
         {_, _} = Pos             -> Pos;
@@ -258,3 +276,9 @@ seal_nif(Data, Seal) ->
 
 is_sealed_nif(Data, Seal) ->
     erlang:nif_error(not_loaded, [Data, Seal]).
+
+owner_nif(Data) ->
+    erlang:nif_error(not_loaded, [Data]).
+
+set_owner_nif(Data, Pid) ->
+    erlang:nif_error(not_loaded, [Data, Pid]).
