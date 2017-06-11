@@ -42,6 +42,7 @@
 
 
 static ErlNifResourceType* memfd_type;
+static ErlNifResourceType* memfd_mmap_type;
 static ERL_NIF_TERM atom_ok;
 static ERL_NIF_TERM atom_error;
 static ERL_NIF_TERM atom_true;
@@ -70,7 +71,14 @@ typedef struct {
 } memfd;
 
 
+typedef struct {
+    void *buf;
+    size_t size;
+} memfd_mmap;
+
+
 static ERL_NIF_TERM allocate_memfd(ErlNifEnv* env, int fd);
+static ERL_NIF_TERM allocate_mmap(ErlNifEnv* env, void *buf, size_t size);
 static bool is_owned(ErlNifEnv* env, memfd* mfd);
 static ERL_NIF_TERM errno_error(ErlNifEnv* env, int error);
 static ERL_NIF_TERM raise_errno_exception(ErlNifEnv* env, int error);
@@ -671,6 +679,47 @@ is_sealed_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 }
 
 
+static ERL_NIF_TERM
+mmap_buffer_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    void *ptr;
+    if (!enif_get_resource(env, argv[0], memfd_type, &ptr))
+        return enif_make_badarg(env);
+
+    memfd *mfd = (memfd *) ptr;
+
+    enif_rwlock_rlock(mfd->lock);
+
+    if (mfd->closed) {
+        enif_rwlock_runlock(mfd->lock);
+        return raise_errno_exception(env, EBADF);
+    }
+
+    int seals = fcntl(mfd->fd, F_GET_SEALS);
+    if (seals == -1
+        || (seals & F_SEAL_SHRINK) == 0
+        || (seals & F_SEAL_WRITE) == 0) {
+        enif_rwlock_runlock(mfd->lock);
+        return errno_error(env, EPERM);
+    }
+
+    struct stat st;
+    if (fstat(mfd->fd, &st) < 0) {
+        enif_rwlock_runlock(mfd->lock);
+        return errno_error(env, errno);
+    }
+
+    int flags = MAP_PRIVATE | MAP_POPULATE;
+    void *buf = mmap(NULL, st.st_size, PROT_READ, flags, mfd->fd, 0);
+
+    enif_rwlock_runlock(mfd->lock);
+
+    if (buf == MAP_FAILED) return errno_error(env, errno);
+
+    return allocate_mmap(env, buf, st.st_size);
+}
+
+
 static void memfd_down(ErlNifEnv* env, void* obj, ErlNifPid* pid, ErlNifMonitor* mon)
 {
     memfd* mfd = (memfd *) obj;
@@ -698,6 +747,13 @@ static void memfd_dtor(ErlNifEnv *env, void *obj)
 }
 
 
+static void memfd_mmap_dtor(ErlNifEnv *env, void *obj)
+{
+    memfd_mmap *map = (memfd_mmap *) obj;
+    munmap(map->buf, map->size);
+}
+
+
 static ErlNifFunc nifs[] =
 {
     {"create_nif",     1, create_nif,   ERL_NIF_DIRTY_JOB_IO_BOUND},
@@ -720,6 +776,8 @@ static ErlNifFunc nifs[] =
 
     {"owner_nif",      1, owner_nif,     ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"set_owner_nif",  2, set_owner_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+
+    {"mmap_buffer_nif",1, mmap_buffer_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
 };
 
 
@@ -757,10 +815,20 @@ static ErlNifResourceType* open_memfd_resource_type(ErlNifEnv *env,
 }
 
 
+static ErlNifResourceType* open_memfd_mmap_resource_type(ErlNifEnv *env,
+                                                         ErlNifResourceFlags flags)
+{
+    return enif_open_resource_type(env, NULL, "memfd_mmap", memfd_mmap_dtor, flags, NULL);
+}
+
+
 static int onload(ErlNifEnv *env, void **priv_data, ERL_NIF_TERM load_info)
 {
     memfd_type = open_memfd_resource_type(env, ERL_NIF_RT_CREATE);
     if (memfd_type == NULL) return -1;
+
+    memfd_mmap_type = open_memfd_mmap_resource_type(env, ERL_NIF_RT_CREATE);
+    if (memfd_mmap_type == NULL) return -1;
 
     init_atoms(env);
 
@@ -773,6 +841,9 @@ static int upgrade(ErlNifEnv* env, void** priv_data, void** old_priv_data,
 {
     memfd_type = open_memfd_resource_type(env, ERL_NIF_RT_TAKEOVER);
     if (memfd_type == NULL) return -1;
+
+    memfd_mmap_type = open_memfd_mmap_resource_type(env, ERL_NIF_RT_TAKEOVER);
+    if (memfd_mmap_type == NULL) return -1;
 
     init_atoms(env);
 
@@ -803,6 +874,20 @@ ERL_NIF_TERM allocate_memfd(ErlNifEnv* env, int fd)
     enif_release_resource(mfd);
 
     return result;
+}
+
+
+ERL_NIF_TERM allocate_mmap(ErlNifEnv* env, void *buf, size_t size)
+{
+    memfd_mmap *map = (memfd_mmap *) enif_alloc_resource(memfd_mmap_type, sizeof(memfd_mmap));
+
+    map->buf = buf;
+    map->size = size;
+
+    ERL_NIF_TERM result = enif_make_resource_binary(env, map, buf, size);
+    enif_release_resource(map);
+
+    return enif_make_tuple2(env, atom_ok, result);
 }
 
 

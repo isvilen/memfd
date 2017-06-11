@@ -17,6 +17,7 @@
         , fd/1
         , owner/1
         , set_owner/2
+        , to_binary/1
         ]).
 
 -on_load(init/0).
@@ -214,6 +215,15 @@ set_owner(#file_descriptor{data = Data}, Pid) ->
     set_owner_nif(Data, Pid).
 
 
+-spec to_binary(Fd) -> {ok, Binary} | {error, Reason}  when
+      Fd     :: file:fd(),
+      Binary :: binary(),
+      Reason :: file:posix().
+
+to_binary(#file_descriptor{data = Data}) ->
+    mmap_buffer_nif(Data).
+
+
 normalize_location(Location) ->
     case Location of
         {_, _} = Pos             -> Pos;
@@ -281,3 +291,6 @@ owner_nif(Data) ->
 
 set_owner_nif(Data, Pid) ->
     erlang:nif_error(not_loaded, [Data, Pid]).
+
+mmap_buffer_nif(Data) ->
+    erlang:nif_error(not_loaded, [Data]).
