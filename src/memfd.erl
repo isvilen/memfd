@@ -27,8 +27,7 @@
 -spec new() -> file:fd().
 
 new() ->
-    Id = erlang:unique_integer([positive]),
-    Name = lists:flatten(io_lib:format("~p-~w", [self(), Id])),
+    Name = lists:flatten(io_lib:format("~p", [self()])),
     case create_nif(Name) of
         Data -> #file_descriptor{module=?MODULE, data=Data}
     end.
