@@ -12,6 +12,8 @@
         , position/2
         , pread/3
         , pwrite/3
+        , seal/2
+        , is_sealed/2
         , fd/1
         ]).
 
@@ -172,6 +174,23 @@ pwrite(Fd, Location, Bytes) ->
     end.
 
 
+-spec seal(Fd, Seal) -> ok | {error, Reason} when
+      Fd   :: file:fd(),
+      Seal :: seal | shrink | grow | write,
+      Reason   :: file:posix().
+
+seal(#file_descriptor{data = Data}, Seal) ->
+    seal_nif(Data, Seal).
+
+
+-spec is_sealed(Fd, Seal) -> true | false when
+      Fd   :: file:fd(),
+      Seal :: seal | shrink | grow | write.
+
+is_sealed(#file_descriptor{data = Data}, Seal) ->
+    is_sealed_nif(Data, Seal).
+
+
 -spec fd(Fd) -> binary() when Fd :: file:fd().
 
 fd(#file_descriptor{data=Data}) ->
@@ -233,3 +252,9 @@ pread_nif(Data, At, Size) ->
 
 pwrite_nif(Data, At, Bytes) ->
     erlang:nif_error(not_loaded, [Data, At, Bytes]).
+
+seal_nif(Data, Seal) ->
+    erlang:nif_error(not_loaded, [Data, Seal]).
+
+is_sealed_nif(Data, Seal) ->
+    erlang:nif_error(not_loaded, [Data, Seal]).

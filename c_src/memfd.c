@@ -32,6 +32,14 @@
 #define F_SEAL_SHRINK 0x0002
 #endif
 
+#if !defined(F_SEAL_GROW)
+#define F_SEAL_GROW 0x0004
+#endif
+
+#if !(defined(F_SEAL_WRITE))
+#define F_SEAL_WRITE 0x0008
+#endif
+
 
 static ErlNifResourceType* memfd_type;
 static ERL_NIF_TERM atom_ok;
@@ -47,6 +55,10 @@ static ERL_NIF_TERM atom_random;
 static ERL_NIF_TERM atom_no_reuse;
 static ERL_NIF_TERM atom_will_need;
 static ERL_NIF_TERM atom_dont_need;
+static ERL_NIF_TERM atom_seal;
+static ERL_NIF_TERM atom_shrink;
+static ERL_NIF_TERM atom_grow;
+static ERL_NIF_TERM atom_write;
 
 
 typedef struct {
@@ -515,6 +527,85 @@ to_fd_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
 }
 
 
+static ERL_NIF_TERM
+seal_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    void *ptr;
+    if (!enif_get_resource(env, argv[0], memfd_type, &ptr))
+        return enif_make_badarg(env);
+
+    int seal;
+    if (enif_compare(argv[1], atom_seal) == 0)
+        seal = F_SEAL_SEAL;
+    else if (enif_compare(argv[1], atom_shrink) == 0)
+        seal = F_SEAL_SHRINK;
+    else if (enif_compare(argv[1], atom_grow) == 0)
+        seal = F_SEAL_GROW;
+    else if (enif_compare(argv[1], atom_write) == 0)
+        seal = F_SEAL_WRITE;
+    else
+        return enif_make_badarg(env);
+
+    memfd *mfd = (memfd *) ptr;
+
+    enif_rwlock_rwlock(mfd->lock);
+
+    if (mfd->closed) {
+        enif_rwlock_rwunlock(mfd->lock);
+        return raise_errno_exception(env, EBADF);
+    }
+
+    if (fcntl(mfd->fd, F_ADD_SEALS, seal)  == -1) {
+        enif_rwlock_rwunlock(mfd->lock);
+        return errno_error(env, errno);
+    }
+
+    enif_rwlock_rwunlock(mfd->lock);
+
+    return atom_ok;
+}
+
+
+static ERL_NIF_TERM
+is_sealed_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[])
+{
+    void *ptr;
+    if (!enif_get_resource(env, argv[0], memfd_type, &ptr))
+        return enif_make_badarg(env);
+
+    int seal;
+    if (enif_compare(argv[1], atom_seal) == 0)
+        seal = F_SEAL_SEAL;
+    else if (enif_compare(argv[1], atom_shrink) == 0)
+        seal = F_SEAL_SHRINK;
+    else if (enif_compare(argv[1], atom_grow) == 0)
+        seal = F_SEAL_GROW;
+    else if (enif_compare(argv[1], atom_write) == 0)
+        seal = F_SEAL_WRITE;
+    else
+        return enif_make_badarg(env);
+
+    memfd *mfd = (memfd *) ptr;
+
+    enif_rwlock_rlock(mfd->lock);
+
+    if (mfd->closed) {
+        enif_rwlock_runlock(mfd->lock);
+        return raise_errno_exception(env, EBADF);
+    }
+
+    int seals = fcntl(mfd->fd, F_GET_SEALS);
+    if (seals == -1) {
+        enif_rwlock_runlock(mfd->lock);
+        return errno_error(env, errno);
+    }
+
+    enif_rwlock_runlock(mfd->lock);
+
+    return (seals & seal) ? atom_true : atom_false;
+}
+
+
 static void memfd_down(ErlNifEnv* env, void* obj, ErlNifPid* pid, ErlNifMonitor* mon)
 {
     memfd* mfd = (memfd *) obj;
@@ -555,8 +646,12 @@ static ErlNifFunc nifs[] =
     {"position_nif",   2, position_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"pread_nif",      3, pread_nif,    ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"pwrite_nif",     3, pwrite_nif,   ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"from_fd_nif",    1, from_fd_nif,  ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"to_fd_nif",      1, to_fd_nif,    ERL_NIF_DIRTY_JOB_IO_BOUND},
+
+    {"from_fd_nif",    1, from_fd_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"to_fd_nif",      1, to_fd_nif,   ERL_NIF_DIRTY_JOB_IO_BOUND},
+
+    {"seal_nif",       2, seal_nif,      ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"is_sealed_nif",  2, is_sealed_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
 };
 
 
@@ -575,6 +670,10 @@ static void init_atoms(ErlNifEnv* env)
     atom_no_reuse = enif_make_atom(env, "no_reuse");
     atom_will_need = enif_make_atom(env, "will_need");
     atom_dont_need = enif_make_atom(env, "dont_need");
+    atom_seal = enif_make_atom(env, "seal");
+    atom_shrink = enif_make_atom(env, "shrink");
+    atom_grow = enif_make_atom(env, "grow");
+    atom_write = enif_make_atom(env, "write");
 }
 
 
