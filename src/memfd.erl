@@ -1,6 +1,7 @@
 -module(memfd).
 
--export([ create/0
+-export([ new/0
+        , new/1
         , close/1
         , advise/4
         , allocate/3
@@ -11,9 +12,12 @@
         , position/2
         , pread/3
         , pwrite/3
-        , mmap/1
-        , fd_to_binary/1
-        , fd_from_binary/1
+        , seal/2
+        , is_sealed/2
+        , fd/1
+        , owner/1
+        , set_owner/2
+        , to_binary/1
         ]).
 
 -on_load(init/0).
@@ -21,12 +25,21 @@
 -include_lib("kernel/include/file.hrl").
 
 
--spec create() -> file:fd().
+-spec new() -> file:fd().
 
-create() ->
-    Id = erlang:unique_integer([positive]),
-    Name = lists:flatten(io_lib:format("~p-~w", [self(), Id])),
+new() ->
+    Name = lists:flatten(io_lib:format("~p", [self()])),
     case create_nif(Name) of
+        Data -> #file_descriptor{module=?MODULE, data=Data}
+    end.
+
+
+-spec new(FdBin) -> Fd when
+      FdBin :: binary(),
+      Fd  :: file:fd().
+
+new(FdBin) ->
+    case from_fd_nif(FdBin) of
         Data -> #file_descriptor{module=?MODULE, data=Data}
     end.
 
@@ -163,32 +176,52 @@ pwrite(Fd, Location, Bytes) ->
     end.
 
 
--spec mmap(Fd) -> {ok, Mmap} | {error, Reason} when
+-spec seal(Fd, Seal) -> ok | {error, Reason} when
+      Fd   :: file:fd(),
+      Seal :: seal | shrink | grow | write,
+      Reason   :: file:posix().
+
+seal(#file_descriptor{data = Data}, Seal) ->
+    seal_nif(Data, Seal).
+
+
+-spec is_sealed(Fd, Seal) -> true | false when
+      Fd   :: file:fd(),
+      Seal :: seal | shrink | grow | write.
+
+is_sealed(#file_descriptor{data = Data}, Seal) ->
+    is_sealed_nif(Data, Seal).
+
+
+-spec fd(Fd) -> binary() when Fd :: file:fd().
+
+fd(#file_descriptor{data=Data}) ->
+    to_fd_nif(Data).
+
+
+-spec owner(Fd) -> Pid when
+      Fd   :: file:fd(),
+      Pid  :: pid().
+
+owner(#file_descriptor{data = Data}) ->
+    owner_nif(Data).
+
+
+-spec set_owner(Fd, Pid) -> ok  when
+      Fd  :: file:fd(),
+      Pid :: pid().
+
+set_owner(#file_descriptor{data = Data}, Pid) ->
+    set_owner_nif(Data, Pid).
+
+
+-spec to_binary(Fd) -> {ok, Binary} | {error, Reason}  when
       Fd     :: file:fd(),
-      Mmap   :: binary(),
+      Binary :: binary(),
       Reason :: file:posix().
 
-mmap(#file_descriptor{data=Data}) ->
-    case mmap_nif(Data) of
-        {ok, MMap} -> {ok, mmap_buffer_nif(MMap)};
-        Error      -> Error
-    end.
-
-
--spec fd_from_binary(Bin) -> Fd when
-      Bin :: binary(),
-      Fd  :: file:fd().
-
-fd_from_binary(Bin) ->
-    case from_fd_nif(Bin) of
-        Data -> #file_descriptor{module=?MODULE, data=Data}
-    end.
-
-
--spec fd_to_binary(Fd) -> binary() when Fd :: file:fd().
-
-fd_to_binary(#file_descriptor{data=Data}) ->
-    to_fd_nif(Data).
+to_binary(#file_descriptor{data = Data}) ->
+    mmap_buffer_nif(Data).
 
 
 normalize_location(Location) ->
@@ -247,8 +280,17 @@ pread_nif(Data, At, Size) ->
 pwrite_nif(Data, At, Bytes) ->
     erlang:nif_error(not_loaded, [Data, At, Bytes]).
 
-mmap_nif(Data) ->
+seal_nif(Data, Seal) ->
+    erlang:nif_error(not_loaded, [Data, Seal]).
+
+is_sealed_nif(Data, Seal) ->
+    erlang:nif_error(not_loaded, [Data, Seal]).
+
+owner_nif(Data) ->
     erlang:nif_error(not_loaded, [Data]).
 
-mmap_buffer_nif(MMap) ->
-    erlang:nif_error(not_loaded, [MMap]).
+set_owner_nif(Data, Pid) ->
+    erlang:nif_error(not_loaded, [Data, Pid]).
+
+mmap_buffer_nif(Data) ->
+    erlang:nif_error(not_loaded, [Data]).
